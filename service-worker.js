@@ -1,4 +1,4 @@
-const CACHE_NAME = "random-cats-v2";
+const CACHE_NAME = "random-cats-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -50,6 +50,27 @@ self.addEventListener("fetch", (event) => {
 
   const requestUrl = new URL(request.url);
   if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  if (requestUrl.pathname.endsWith("/assets/manifest.json")) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const responseCopy = response.clone();
+            caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(request, responseCopy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request)),
+    );
+    return;
+  }
+
+  if (requestUrl.pathname.includes("/assets/")) {
     return;
   }
 

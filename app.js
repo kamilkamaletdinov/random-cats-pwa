@@ -1,3 +1,4 @@
+const LOCAL_MANIFEST_URL = "./assets/manifest.json";
 const PHOTO_API_URL = "https://api.thecatapi.com/v1/images/search";
 const PHOTO_FALLBACK_URL = "https://cataas.com/cat";
 const GIF_URL = "https://cataas.com/cat/gif";
@@ -13,6 +14,7 @@ const tabs = [...document.querySelectorAll(".tab")];
 
 let activeMode = "photo";
 let requestId = 0;
+let manifestPromise = null;
 
 const initialMode =
   new URLSearchParams(window.location.search).get("mode") === "gif"
@@ -34,7 +36,33 @@ function preloadImage(source) {
   });
 }
 
-async function getRandomPhoto() {
+function getRandomItem(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("В локальной коллекции нет изображений");
+  }
+
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function getLocalManifest() {
+  if (!manifestPromise) {
+    manifestPromise = fetch(LOCAL_MANIFEST_URL, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Локальный каталог вернул ${response.status}`);
+        }
+        return response.json();
+      })
+      .catch((error) => {
+        manifestPromise = null;
+        throw error;
+      });
+  }
+
+  return manifestPromise;
+}
+
+async function getExternalPhoto() {
   try {
     const response = await fetch(
       `${PHOTO_API_URL}?limit=20&cache_bust=${Date.now()}`,
@@ -46,11 +74,7 @@ async function getRandomPhoto() {
     }
 
     const photos = await response.json();
-    if (!Array.isArray(photos) || photos.length === 0) {
-      throw new Error("The Cat API не вернул фотографии");
-    }
-
-    const photo = photos[Math.floor(Math.random() * photos.length)];
+    const photo = getRandomItem(photos);
     const breedNames = photo.breeds?.map((breed) => breed.name).filter(Boolean);
 
     return {
@@ -67,11 +91,35 @@ async function getRandomPhoto() {
   }
 }
 
-function getRandomGif() {
-  return {
-    url: `${GIF_URL}?cache_bust=${Date.now()}`,
-    caption: "Анимированный котик!",
-  };
+async function getRandomPhoto() {
+  try {
+    const manifest = await getLocalManifest();
+    const photo = getRandomItem(manifest.photos);
+
+    return {
+      url: new URL(photo.src, window.location.href).href,
+      caption: photo.caption || "Просто прекрасный котик!",
+    };
+  } catch {
+    return getExternalPhoto();
+  }
+}
+
+async function getRandomGif() {
+  try {
+    const manifest = await getLocalManifest();
+    const gif = getRandomItem(manifest.gifs);
+
+    return {
+      url: new URL(gif.src, window.location.href).href,
+      caption: gif.caption || "Анимированный котик!",
+    };
+  } catch {
+    return {
+      url: `${GIF_URL}?cache_bust=${Date.now()}`,
+      caption: "Анимированный котик!",
+    };
+  }
 }
 
 async function showRandomMedia() {
@@ -83,7 +131,7 @@ async function showRandomMedia() {
   caption.textContent = "";
 
   try {
-    const media = mode === "gif" ? getRandomGif() : await getRandomPhoto();
+    const media = mode === "gif" ? await getRandomGif() : await getRandomPhoto();
 
     if (currentRequestId !== requestId) {
       return;
