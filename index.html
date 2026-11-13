@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ff6b9d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Котики" />
+    <meta name="description" content="Случайные фото кошек" />
+
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icon-180.png" />
+    <link rel="icon" href="icon-192.png" type="image/png" />
+    <link rel="stylesheet" href="styles.css" />
+
+    <title>Случайные котики</title>
+  </head>
+  <body>
+    <main class="app">
+      <header class="app-header">
+        <h1>Случайный котик</h1>
+        <p>Каждый запуск показывает нового котика</p>
+      </header>
+
+      <section class="photo-card" aria-live="polite">
+        <div class="image-frame">
+          <img id="cat-image" alt="Случайное фото кошки" />
+          <div id="loading" class="loading" role="status">Ищем котика…</div>
+        </div>
+        <p id="caption" class="caption"></p>
+      </section>
+
+      <button id="next-button" class="next-button" type="button">
+        🎲 Ещё котик
+      </button>
+
+      <p id="error-message" class="error-message" role="alert" hidden></p>
+      <p class="install-hint">
+        В Safari нажмите «Поделиться» → «На экран „Домой”»
+      </p>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
