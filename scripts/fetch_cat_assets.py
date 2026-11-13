@@ -16,8 +16,8 @@ ASSETS_DIR = ROOT / "assets"
 PHOTOS_DIR = ASSETS_DIR / "photos"
 GIFS_DIR = ASSETS_DIR / "gifs"
 
-PHOTO_COUNT = 18
-GIF_COUNT = 10
+PHOTO_COUNT = 40
+GIF_COUNT = 24
 USER_AGENT = "Mozilla/5.0 (compatible; RandomCatsPWA/1.0)"
 
 
@@ -124,7 +124,7 @@ def fetch_photos() -> list[dict[str, str]]:
     candidates: list[str] = []
 
     try:
-        for page in range(1, 6):
+        for page in range(1, 7):
             response = download(
                 "https://api.thecatapi.com/v1/images/search?limit=10&page="
                 f"{page}&cache_bust={time.time_ns()}",

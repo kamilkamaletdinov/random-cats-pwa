@@ -14,7 +14,12 @@ const tabs = [...document.querySelectorAll(".tab")];
 
 let activeMode = "photo";
 let requestId = 0;
-let manifestPromise = null;
+let manifestGeneratedAt = null;
+
+const usedMedia = {
+  photo: new Set(),
+  gif: new Set(),
+};
 
 const initialMode =
   new URLSearchParams(window.location.search).get("mode") === "gif"
@@ -38,34 +43,74 @@ function preloadImage(source) {
 
 function getRandomItem(items) {
   if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("В локальной коллекции нет изображений");
+    throw new Error("В коллекции нет изображений");
   }
 
   return items[Math.floor(Math.random() * items.length)];
 }
 
-function getLocalManifest() {
-  if (!manifestPromise) {
-    manifestPromise = fetch(LOCAL_MANIFEST_URL, { cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Локальный каталог вернул ${response.status}`);
-        }
-        return response.json();
-      })
-      .catch((error) => {
-        manifestPromise = null;
-        throw error;
-      });
+function resolveMediaUrl(source) {
+  return new URL(source, window.location.href).href;
+}
+
+function getMediaKey(mode, source) {
+  return `${mode}:${resolveMediaUrl(source)}`;
+}
+
+function getUnusedItem(items, mode) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return null;
   }
 
-  return manifestPromise;
+  const unusedItems = items.filter((item) => {
+    const source = item.src ?? item.url;
+    return source && !usedMedia[mode].has(getMediaKey(mode, source));
+  });
+
+  return unusedItems.length > 0 ? getRandomItem(unusedItems) : null;
+}
+
+function markMediaUsed(mode, source) {
+  usedMedia[mode].add(getMediaKey(mode, source));
+}
+
+async function getLocalManifest() {
+  const response = await fetch(LOCAL_MANIFEST_URL, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(`Локальный каталог вернул ${response.status}`);
+  }
+
+  const manifest = await response.json();
+
+  if (manifest.generatedAt !== manifestGeneratedAt) {
+    manifestGeneratedAt = manifest.generatedAt;
+    usedMedia.photo.clear();
+    usedMedia.gif.clear();
+  }
+
+  return manifest;
+}
+
+function getLocalMedia(items, mode) {
+  const item = getUnusedItem(items, mode);
+  if (!item) {
+    return null;
+  }
+
+  const url = resolveMediaUrl(item.src);
+  markMediaUsed(mode, url);
+
+  return {
+    url,
+    caption: item.caption || "Просто прекрасный котик!",
+  };
 }
 
 async function getExternalPhoto() {
   try {
     const response = await fetch(
-      `${PHOTO_API_URL}?limit=20&cache_bust=${Date.now()}`,
+      `${PHOTO_API_URL}?limit=10&cache_bust=${Date.now()}`,
       { cache: "no-store" },
     );
 
@@ -74,8 +119,9 @@ async function getExternalPhoto() {
     }
 
     const photos = await response.json();
-    const photo = getRandomItem(photos);
+    const photo = getUnusedItem(photos, "photo") ?? getRandomItem(photos);
     const breedNames = photo.breeds?.map((breed) => breed.name).filter(Boolean);
+    markMediaUsed("photo", photo.url);
 
     return {
       url: photo.url,
@@ -84,8 +130,11 @@ async function getExternalPhoto() {
         : "Просто прекрасный котик!",
     };
   } catch {
+    const url = `${PHOTO_FALLBACK_URL}?cache_bust=${Date.now()}`;
+    markMediaUsed("photo", url);
+
     return {
-      url: `${PHOTO_FALLBACK_URL}?cache_bust=${Date.now()}`,
+      url,
       caption: "Просто прекрасный котик!",
     };
   }
@@ -94,32 +143,37 @@ async function getExternalPhoto() {
 async function getRandomPhoto() {
   try {
     const manifest = await getLocalManifest();
-    const photo = getRandomItem(manifest.photos);
+    const localPhoto = getLocalMedia(manifest.photos, "photo");
 
-    return {
-      url: new URL(photo.src, window.location.href).href,
-      caption: photo.caption || "Просто прекрасный котик!",
-    };
+    if (localPhoto) {
+      return localPhoto;
+    }
   } catch {
-    return getExternalPhoto();
+    // Если локальный каталог недоступен, используем внешний источник.
   }
+
+  return getExternalPhoto();
 }
 
 async function getRandomGif() {
   try {
     const manifest = await getLocalManifest();
-    const gif = getRandomItem(manifest.gifs);
+    const localGif = getLocalMedia(manifest.gifs, "gif");
 
-    return {
-      url: new URL(gif.src, window.location.href).href,
-      caption: gif.caption || "Анимированный котик!",
-    };
+    if (localGif) {
+      return localGif;
+    }
   } catch {
-    return {
-      url: `${GIF_URL}?cache_bust=${Date.now()}`,
-      caption: "Анимированный котик!",
-    };
+    // Если локальный каталог недоступен, используем внешний источник.
   }
+
+  const url = `${GIF_URL}?cache_bust=${Date.now()}`;
+  markMediaUsed("gif", url);
+
+  return {
+    url,
+    caption: "Анимированный котик!",
+  };
 }
 
 async function showRandomMedia() {
