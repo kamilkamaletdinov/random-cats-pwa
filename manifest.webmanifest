@@ -1,7 +1,7 @@
 {
   "name": "Случайные котики",
   "short_name": "Котики",
-  "description": "Случайные фото кошек",
+  "description": "Случайные фото и GIF с котиками",
   "lang": "ru",
   "start_url": "./",
   "scope": "./",

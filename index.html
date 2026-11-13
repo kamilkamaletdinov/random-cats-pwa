@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Котики" />
-    <meta name="description" content="Случайные фото кошек" />
+    <meta name="description" content="Случайные фото и GIF с котиками" />
 
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icon-180.png" />
@@ -20,10 +20,42 @@
     <main class="app">
       <header class="app-header">
         <h1>Случайный котик</h1>
-        <p>Каждый запуск показывает нового котика</p>
+        <p>Случайные фото и GIF с котиками</p>
       </header>
 
-      <section class="photo-card" aria-live="polite">
+      <div class="tabs" role="tablist" aria-label="Тип изображения">
+        <button
+          id="photo-tab"
+          class="tab"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="media-panel"
+          data-mode="photo"
+        >
+          📷 Фото
+        </button>
+        <button
+          id="gif-tab"
+          class="tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="media-panel"
+          data-mode="gif"
+          tabindex="-1"
+        >
+          🎞️ GIF
+        </button>
+      </div>
+
+      <section
+        id="media-panel"
+        class="photo-card"
+        role="tabpanel"
+        aria-labelledby="photo-tab"
+        aria-live="polite"
+      >
         <div class="image-frame">
           <img id="cat-image" alt="Случайное фото кошки" />
           <div id="loading" class="loading" role="status">Ищем котика…</div>
@@ -32,7 +64,7 @@
       </section>
 
       <button id="next-button" class="next-button" type="button">
-        🎲 Ещё котик
+        🎲 <span id="next-button-label">Ещё фото</span>
       </button>
 
       <p id="error-message" class="error-message" role="alert" hidden></p>

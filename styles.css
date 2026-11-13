@@ -47,6 +47,42 @@ h1 {
   color: #7e6472;
 }
 
+.tabs {
+  width: min(100%, 320px);
+  padding: 4px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  border: 1px solid rgb(255 255 255 / 80%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 65%);
+  box-shadow: 0 8px 24px rgb(92 43 68 / 10%);
+  backdrop-filter: blur(12px);
+}
+
+.tab {
+  min-height: 44px;
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 999px;
+  color: #765c69;
+  background: transparent;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: #ad244e;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(92 43 68 / 12%);
+}
+
+.tab:focus-visible {
+  outline: 3px solid rgb(237 79 137 / 30%);
+  outline-offset: 2px;
+}
+
 .photo-card {
   width: 100%;
   margin: 0;

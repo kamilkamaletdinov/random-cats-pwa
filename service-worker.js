@@ -1,4 +1,4 @@
-const CACHE_NAME = "random-cats-v1";
+const CACHE_NAME = "random-cats-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
