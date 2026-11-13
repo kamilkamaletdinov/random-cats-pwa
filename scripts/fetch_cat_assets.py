@@ -47,9 +47,15 @@ def content_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-def save_photo(data: bytes, output_dir: Path, index: int) -> dict[str, str]:
-    with Image.open(io.BytesIO(data)) as source:
-        image = source.convert("RGB")
+def save_photo(
+    data: bytes,
+    output_dir: Path,
+    index: int,
+    source_id: str | None = None,
+    source: str = "cataas",
+) -> dict[str, str]:
+    with Image.open(io.BytesIO(data)) as source_image:
+        image = source_image.convert("RGB")
         image.thumbnail((900, 1100), Image.Resampling.LANCZOS)
 
         buffer = io.BytesIO()
@@ -59,10 +65,16 @@ def save_photo(data: bytes, output_dir: Path, index: int) -> dict[str, str]:
     filename = f"cat-photo-{index:02d}-{content_hash(optimized)}.jpg"
     (output_dir / filename).write_bytes(optimized)
 
-    return {
+    result = {
         "src": f"assets/photos/{filename}",
         "caption": "Просто прекрасный котик!",
+        "source": source,
     }
+
+    if source_id:
+        result["sourceId"] = source_id
+
+    return result
 
 
 def build_optimized_gif(data: bytes, frame_step: int, colors: int) -> bytes:
@@ -121,7 +133,7 @@ def save_gif(data: bytes, output_dir: Path, index: int) -> dict[str, str]:
 def fetch_photos() -> list[dict[str, str]]:
     photos: list[dict[str, str]] = []
     seen_hashes: set[str] = set()
-    candidates: list[str] = []
+    candidates: list[dict[str, str]] = []
 
     try:
         for page in range(1, 7):
@@ -133,7 +145,12 @@ def fetch_photos() -> list[dict[str, str]]:
             for photo in json.loads(response):
                 url = photo.get("url")
                 if url:
-                    candidates.append(url)
+                    candidates.append(
+                        {
+                            "url": url,
+                            "id": str(photo.get("id") or ""),
+                        }
+                    )
     except Exception as error:
         print(f"The Cat API недоступен: {error}")
 
@@ -141,9 +158,15 @@ def fetch_photos() -> list[dict[str, str]]:
     candidate_index = 0
     while len(photos) < PHOTO_COUNT and attempts < PHOTO_COUNT * 4:
         attempts += 1
+        source_id = None
+        source = "cataas"
+
         if candidates and candidate_index < len(candidates):
-            url = candidates[candidate_index]
+            candidate = candidates[candidate_index]
             candidate_index += 1
+            url = candidate["url"]
+            source_id = candidate["id"] or None
+            source = "thecatapi"
         else:
             url = f"https://cataas.com/cat?cache_bust={time.time_ns()}"
 
@@ -153,7 +176,15 @@ def fetch_photos() -> list[dict[str, str]]:
             if digest in seen_hashes:
                 continue
             seen_hashes.add(digest)
-            photos.append(save_photo(data, PHOTOS_DIR, len(photos) + 1))
+            photos.append(
+                save_photo(
+                    data,
+                    PHOTOS_DIR,
+                    len(photos) + 1,
+                    source_id=source_id,
+                    source=source,
+                )
+            )
             print(f"Фото {len(photos)}/{PHOTO_COUNT}")
         except Exception as error:
             print(f"Фото пропущено: {error}")

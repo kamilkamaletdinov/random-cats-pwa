@@ -3,6 +3,13 @@ const PHOTO_API_URL = "https://api.thecatapi.com/v1/images/search";
 const PHOTO_FALLBACK_URL = "https://cataas.com/cat";
 const GIF_URL = "https://cataas.com/cat/gif";
 
+const HISTORY_KEY = "random-cats-history-v1";
+const HISTORY_LIMIT = 1500;
+const MANIFEST_TTL_MS = 5 * 60 * 1000;
+const API_TIMEOUT_MS = 5000;
+const GIF_TIMEOUT_MS = 12000;
+const MEDIA_TIMEOUT_MS = 15000;
+
 const image = document.querySelector("#cat-image");
 const loading = document.querySelector("#loading");
 const caption = document.querySelector("#caption");
@@ -12,19 +19,69 @@ const errorMessage = document.querySelector("#error-message");
 const mediaPanel = document.querySelector("#media-panel");
 const tabs = [...document.querySelectorAll(".tab")];
 
-let activeMode = "photo";
-let requestId = 0;
-let manifestGeneratedAt = null;
-
-const usedMedia = {
+const seenMedia = {
   photo: new Set(),
   gif: new Set(),
 };
+
+let activeMode = "photo";
+let requestId = 0;
+let manifestCache = null;
+let manifestCachedAt = 0;
+let currentObjectUrl = null;
 
 const initialMode =
   new URLSearchParams(window.location.search).get("mode") === "gif"
     ? "gif"
     : "photo";
+
+loadSeenHistory();
+
+function loadSeenHistory() {
+  try {
+    const savedHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || "{}");
+
+    for (const mode of ["photo", "gif"]) {
+      const values = Array.isArray(savedHistory[mode]) ? savedHistory[mode] : [];
+      values.forEach((value) => seenMedia[mode].add(String(value)));
+    }
+  } catch {
+    // Если история недоступна, приложение продолжит работать без неё.
+  }
+}
+
+function saveSeenHistory() {
+  try {
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify({
+        photo: [...seenMedia.photo],
+        gif: [...seenMedia.gif],
+      }),
+    );
+  } catch {
+    // В приватном режиме localStorage может быть недоступен.
+  }
+}
+
+function isMediaSeen(mode, key) {
+  return Boolean(key) && seenMedia[mode].has(key);
+}
+
+function markMediaUsed(mode, key) {
+  if (!key || seenMedia[mode].has(key)) {
+    return;
+  }
+
+  seenMedia[mode].add(key);
+
+  while (seenMedia[mode].size > HISTORY_LIMIT) {
+    const oldestKey = seenMedia[mode].values().next().value;
+    seenMedia[mode].delete(oldestKey);
+  }
+
+  saveSeenHistory();
+}
 
 function setLoading(isLoading) {
   loading.hidden = !isLoading;
@@ -32,148 +89,372 @@ function setLoading(isLoading) {
   image.classList.remove("visible");
 }
 
+function randomItem(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function randomPage() {
+  return Math.floor(Math.random() * 20) + 1;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function preloadImage(source) {
   return new Promise((resolve, reject) => {
     const preloadedImage = new Image();
-    preloadedImage.onload = () => resolve(source);
-    preloadedImage.onerror = reject;
+    const timeout = setTimeout(() => {
+      preloadedImage.src = "";
+      reject(new Error("Не удалось загрузить изображение вовремя"));
+    }, MEDIA_TIMEOUT_MS);
+
+    preloadedImage.onload = () => {
+      clearTimeout(timeout);
+      resolve(source);
+    };
+    preloadedImage.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error("Не удалось загрузить изображение"));
+    };
     preloadedImage.src = source;
   });
 }
 
-function getRandomItem(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("В коллекции нет изображений");
+async function hashBlob(blob) {
+  if (!globalThis.crypto?.subtle) {
+    return null;
   }
 
-  return items[Math.floor(Math.random() * items.length)];
+  try {
+    const hash = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    return [...new Uint8Array(hash)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return null;
+  }
 }
 
 function resolveMediaUrl(source) {
   return new URL(source, window.location.href).href;
 }
 
-function getMediaKey(mode, source) {
-  return `${mode}:${resolveMediaUrl(source)}`;
-}
-
-function getUnusedItem(items, mode) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return null;
+async function getLocalManifest() {
+  if (manifestCache && Date.now() - manifestCachedAt < MANIFEST_TTL_MS) {
+    return manifestCache;
   }
 
-  const unusedItems = items.filter((item) => {
-    const source = item.src ?? item.url;
-    return source && !usedMedia[mode].has(getMediaKey(mode, source));
-  });
-
-  return unusedItems.length > 0 ? getRandomItem(unusedItems) : null;
-}
-
-function markMediaUsed(mode, source) {
-  usedMedia[mode].add(getMediaKey(mode, source));
-}
-
-async function getLocalManifest() {
-  const response = await fetch(LOCAL_MANIFEST_URL, { cache: "no-store" });
+  const response = await fetchWithTimeout(
+    LOCAL_MANIFEST_URL,
+    { cache: "no-store" },
+    API_TIMEOUT_MS,
+  );
 
   if (!response.ok) {
     throw new Error(`Локальный каталог вернул ${response.status}`);
   }
 
-  const manifest = await response.json();
-
-  if (manifest.generatedAt !== manifestGeneratedAt) {
-    manifestGeneratedAt = manifest.generatedAt;
-    usedMedia.photo.clear();
-    usedMedia.gif.clear();
-  }
-
-  return manifest;
+  manifestCache = await response.json();
+  manifestCachedAt = Date.now();
+  return manifestCache;
 }
 
-function getLocalMedia(items, mode) {
-  const item = getUnusedItem(items, mode);
-  if (!item) {
+function getLocalKey(item) {
+  if (item.sourceId) {
+    return `catapi:${item.sourceId}`;
+  }
+
+  const contentMatch = item.src.match(/-([a-f0-9]{12})\.(?:jpg|gif)$/i);
+  if (contentMatch) {
+    const type = item.src.includes("/gifs/") ? "gif" : "photo";
+    return `local-${type}:${contentMatch[1]}`;
+  }
+
+  return `local:${item.src}`;
+}
+
+function getLocalMedia(
+  items,
+  mode,
+  allowSeen = false,
+  excludedKeys = new Set(),
+) {
+  if (!Array.isArray(items) || items.length === 0) {
     return null;
   }
 
-  const url = resolveMediaUrl(item.src);
-  markMediaUsed(mode, url);
+  const candidates = items
+    .map((item) => ({ item, key: getLocalKey(item) }))
+    .filter(
+      ({ key }) =>
+        !excludedKeys.has(key) && (allowSeen || !isMediaSeen(mode, key)),
+    );
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const { item, key } = randomItem(candidates);
 
   return {
-    url,
+    url: resolveMediaUrl(item.src),
+    key,
     caption: item.caption || "Просто прекрасный котик!",
+    objectUrl: null,
   };
 }
 
-async function getExternalPhoto() {
-  try {
-    const response = await fetch(
-      `${PHOTO_API_URL}?limit=10&cache_bust=${Date.now()}`,
-      { cache: "no-store" },
+async function getDynamicPhoto() {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await fetchWithTimeout(
+      `${PHOTO_API_URL}?limit=10&page=${randomPage()}&cache_bust=${Date.now()}-${attempt}`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      },
     );
 
     if (!response.ok) {
-      throw new Error(`The Cat API вернул ${response.status}`);
+      continue;
     }
 
     const photos = await response.json();
-    const photo = getUnusedItem(photos, "photo") ?? getRandomItem(photos);
+    if (!Array.isArray(photos) || photos.length === 0) {
+      continue;
+    }
+
+    const unseenPhotos = photos.filter((photo) => {
+      if (!photo.url || /\.gif(?:$|\?)/i.test(photo.url)) {
+        return false;
+      }
+
+      const key = photo.id ? `catapi:${photo.id}` : `url:${photo.url}`;
+      return !isMediaSeen("photo", key);
+    });
+
+    if (unseenPhotos.length === 0) {
+      continue;
+    }
+
+    const photo = randomItem(unseenPhotos);
+    const key = photo.id ? `catapi:${photo.id}` : `url:${photo.url}`;
     const breedNames = photo.breeds?.map((breed) => breed.name).filter(Boolean);
-    markMediaUsed("photo", photo.url);
 
     return {
       url: photo.url,
+      key,
       caption: breedNames?.length
         ? `Порода: ${breedNames.join(", ")}`
         : "Просто прекрасный котик!",
+      objectUrl: null,
     };
-  } catch {
-    const url = `${PHOTO_FALLBACK_URL}?cache_bust=${Date.now()}`;
-    markMediaUsed("photo", url);
+  }
+
+  throw new Error("Не найдено новых фотографий");
+}
+
+async function getDynamicCataasPhoto() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetchWithTimeout(
+      PHOTO_FALLBACK_URL,
+      {
+        cache: "no-store",
+        headers: { Accept: "image/jpeg,image/*;q=0.8" },
+      },
+      API_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      continue;
+    }
+
+    const contentType = response.headers.get("Content-Type") || "";
+    if (!contentType.startsWith("image/")) {
+      continue;
+    }
+
+    const blob = await response.blob();
+    const hash = await hashBlob(blob);
+    const key = hash ? `sha256:${hash}` : `cataas-photo:${Date.now()}`;
+
+    if (isMediaSeen("photo", key)) {
+      continue;
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
 
     return {
-      url,
+      url: objectUrl,
+      key,
       caption: "Просто прекрасный котик!",
+      objectUrl,
     };
   }
+
+  throw new Error("Не найдено новых фотографий");
 }
 
-async function getRandomPhoto() {
-  try {
-    const manifest = await getLocalManifest();
-    const localPhoto = getLocalMedia(manifest.photos, "photo");
+async function getDynamicGif() {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await fetchWithTimeout(
+      GIF_URL,
+      {
+        cache: "no-store",
+        headers: { Accept: "image/gif,image/*;q=0.8" },
+      },
+      GIF_TIMEOUT_MS,
+    );
 
-    if (localPhoto) {
-      return localPhoto;
+    if (!response.ok) {
+      continue;
     }
-  } catch {
-    // Если локальный каталог недоступен, используем внешний источник.
+
+    const contentType = response.headers.get("Content-Type") || "";
+    if (!contentType.startsWith("image/gif")) {
+      continue;
+    }
+
+    const blob = await response.blob();
+    const hash = await hashBlob(blob);
+    const key = hash ? `sha256:${hash}` : `cataas-gif:${Date.now()}`;
+
+    if (isMediaSeen("gif", key)) {
+      continue;
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+
+    return {
+      url: objectUrl,
+      key,
+      caption: "Анимированный котик!",
+      objectUrl,
+    };
   }
 
-  return getExternalPhoto();
+  throw new Error("Не найдено новых GIF");
 }
 
-async function getRandomGif() {
+async function* getPhotoCandidates() {
+  const addedKeys = new Set();
+
+  function canAdd(candidate) {
+    if (!candidate || addedKeys.has(candidate.key)) {
+      return false;
+    }
+
+    addedKeys.add(candidate.key);
+    return true;
+  }
+
+  try {
+    const dynamicPhoto = await getDynamicPhoto();
+    if (canAdd(dynamicPhoto)) {
+      yield dynamicPhoto;
+    }
+  } catch {
+    // Локальная коллекция будет использована как резерв.
+  }
+
+  let manifest = null;
+  try {
+    manifest = await getLocalManifest();
+    const localPhoto = getLocalMedia(manifest.photos, "photo");
+    if (canAdd(localPhoto)) {
+      yield localPhoto;
+    }
+  } catch {
+    // Если локальный каталог недоступен, пробуем второй внешний источник.
+  }
+
+  try {
+    const cataasPhoto = await getDynamicCataasPhoto();
+    if (canAdd(cataasPhoto)) {
+      yield cataasPhoto;
+    }
+  } catch {
+    // Резервный внешний источник также может быть недоступен.
+  }
+
+  if (manifest) {
+    const anyLocalPhoto = getLocalMedia(
+      manifest.photos,
+      "photo",
+      true,
+      addedKeys,
+    );
+    if (canAdd(anyLocalPhoto)) {
+      yield anyLocalPhoto;
+    }
+  }
+}
+
+async function* getGifCandidates() {
+  const addedKeys = new Set();
+
+  function canAdd(candidate) {
+    if (!candidate || addedKeys.has(candidate.key)) {
+      return false;
+    }
+
+    addedKeys.add(candidate.key);
+    return true;
+  }
+
+  try {
+    const dynamicGif = await getDynamicGif();
+    if (canAdd(dynamicGif)) {
+      yield dynamicGif;
+    }
+  } catch {
+    // Локальная коллекция будет использована как резерв.
+  }
+
   try {
     const manifest = await getLocalManifest();
     const localGif = getLocalMedia(manifest.gifs, "gif");
+    if (canAdd(localGif)) {
+      yield localGif;
+    }
 
-    if (localGif) {
-      return localGif;
+    const anyLocalGif = getLocalMedia(
+      manifest.gifs,
+      "gif",
+      true,
+      addedKeys,
+    );
+    if (canAdd(anyLocalGif)) {
+      yield anyLocalGif;
     }
   } catch {
-    // Если локальный каталог недоступен, используем внешний источник.
+    // Если локальный каталог недоступен, динамический источник уже был проверен.
+  }
+}
+
+async function loadFirstWorkingCandidate(candidates) {
+  for await (const candidate of candidates) {
+    try {
+      await preloadImage(candidate.url);
+      return candidate;
+    } catch {
+      if (candidate.objectUrl) {
+        URL.revokeObjectURL(candidate.objectUrl);
+      }
+    }
   }
 
-  const url = `${GIF_URL}?cache_bust=${Date.now()}`;
-  markMediaUsed("gif", url);
-
-  return {
-    url,
-    caption: "Анимированный котик!",
-  };
+  return null;
 }
 
 async function showRandomMedia() {
@@ -185,30 +466,44 @@ async function showRandomMedia() {
   caption.textContent = "";
 
   try {
-    const media = mode === "gif" ? await getRandomGif() : await getRandomPhoto();
+    const candidates =
+      mode === "gif" ? await getGifCandidates() : await getPhotoCandidates();
 
     if (currentRequestId !== requestId) {
       return;
     }
 
-    await preloadImage(media.url);
+    const media = await loadFirstWorkingCandidate(candidates);
+
+    if (!media) {
+      throw new Error("Нет доступных изображений");
+    }
 
     if (currentRequestId !== requestId) {
+      if (media.objectUrl) {
+        URL.revokeObjectURL(media.objectUrl);
+      }
       return;
     }
 
+    const previousObjectUrl = currentObjectUrl;
     image.src = media.url;
     image.alt = media.caption;
     image.classList.add("visible");
     caption.textContent = media.caption;
-  } catch {
-    if (currentRequestId !== requestId) {
-      return;
+    currentObjectUrl = media.objectUrl;
+
+    if (previousObjectUrl) {
+      URL.revokeObjectURL(previousObjectUrl);
     }
 
-    errorMessage.textContent =
-      "Не удалось загрузить котика. Проверьте подключение к интернету и попробуйте ещё раз.";
-    errorMessage.hidden = false;
+    markMediaUsed(mode, media.key);
+  } catch {
+    if (currentRequestId === requestId) {
+      errorMessage.textContent =
+        "Не удалось загрузить котика. Проверьте подключение к интернету и попробуйте ещё раз.";
+      errorMessage.hidden = false;
+    }
   } finally {
     if (currentRequestId === requestId) {
       loading.hidden = true;
